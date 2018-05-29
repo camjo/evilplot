@@ -30,7 +30,7 @@
 
 package com.cibo.evilplot.colors
 
-import com.cibo.evilplot.geometry.{Disc, Rect, Style, Text}
+import com.cibo.evilplot.geometry.{Disc, Drawable, Rect, Style, Text}
 import com.cibo.evilplot.numeric.{AxisDescriptor, Bounds, Labeling}
 import com.cibo.evilplot.plot.aesthetics.Theme
 import com.cibo.evilplot.plot.{LegendContext, LegendStyle}
@@ -40,6 +40,32 @@ sealed trait Coloring[A] {
   def apply(dataToColor: Seq[A])(implicit theme: Theme): A => Color
 }
 
+case class LegendEntry(color: Color, desc: String)
+case class LegendData(style: LegendStyle, entries:Seq[LegendEntry])
+
+object LegendContextBuilders{
+
+  def fromCategorical(data:LegendData)(implicit theme: Theme) : LegendContext = {
+    val elements = data.entries.map{ x =>
+      Disc(theme.elements.pointSize) filled x.color
+    }
+    val labels = renderLabels(data)
+    LegendContext(elements,labels ,LegendStyle.Categorical)
+  }
+
+  def fromGradient(data: LegendData)(implicit theme: Theme) : LegendContext = {
+    val elements = data.entries.map{ x =>
+      Rect(theme.fonts.legendLabelSize, theme.fonts.legendLabelSize) filled x.color
+    }
+    val labels = renderLabels(data)
+    LegendContext(elements,labels ,LegendStyle.Gradient)
+  }
+
+  private def renderLabels(data: LegendData)(implicit theme: Theme) :Seq[Drawable] = data.entries.map(x =>  Style(
+    Text(x.desc, theme.fonts.legendLabelSize, theme.fonts.fontFace),
+    theme.colors.legendLabel))
+}
+
 trait CategoricalColoring[A] extends Coloring[A] {
   protected def distinctElemsAndColorFunction(dataToColor: Seq[A])(
     implicit theme: Theme): (Seq[A], A => Color)
@@ -47,19 +73,17 @@ trait CategoricalColoring[A] extends Coloring[A] {
     distinctElemsAndColorFunction(dataToColor)._2
   }
 
+
+  protected def buildLegendData(elems:Seq[A], coloring:A =>Color) = LegendData(LegendStyle.Categorical,
+    elems.map{x=> LegendEntry(coloring(x),x.toString)})
+
   def legendContext(dataToColor: Seq[A])(implicit theme: Theme): LegendContext = {
     val (distinct, coloring) = distinctElemsAndColorFunction(dataToColor)
-    LegendContext(
-      elements = distinct.map(v => Disc(theme.elements.pointSize) filled coloring(v)),
-      labels = distinct.map(
-        a =>
-          Style(
-            Text(a.toString, theme.fonts.legendLabelSize, theme.fonts.fontFace),
-            theme.colors.legendLabel)),
-      defaultStyle = LegendStyle.Categorical
-    )
+    val data = buildLegendData(distinct,coloring)
+    LegendContextBuilders.fromCategorical(data)
   }
 }
+
 object CategoricalColoring {
 
   /**
@@ -193,20 +217,20 @@ object ContinuousColoring {
           gradientMode)
       }
 
-      def legendContext(coloringDimension: Seq[Double])(implicit theme: Theme): LegendContext = {
+      private def axisDescriptorToLegendData(d:AxisDescriptor, coloring: Double => Color) =
+        LegendData(LegendStyle.Categorical, d.values.zip(d.labels).map{ case (value, label) =>
+          LegendEntry(coloring(value),label)
+        })
+
+      protected def buildLegendData(coloringDimension: Seq[Double])(implicit theme: Theme) = {
         val descriptor = getDescriptor(min, max, coloringDimension, 5)
         val coloring = apply(coloringDimension)
-        LegendContext(
-          elements = descriptor.values.map(v =>
-            Rect(theme.fonts.legendLabelSize, theme.fonts.legendLabelSize) filled coloring(v)),
-          labels = descriptor.labels.map(
-            l =>
-              Style(
-                Text(l, theme.fonts.legendLabelSize, theme.fonts.fontFace),
-                theme.colors.legendLabel)),
-          defaultStyle = LegendStyle.Gradient
-        )
+        axisDescriptorToLegendData(descriptor,coloring)
       }
+
+      def legendContext(coloringDimension: Seq[Double])(implicit theme: Theme): LegendContext =
+        LegendContextBuilders.fromCategorical(buildLegendData(coloringDimension))
+
     }
   /** Convenience coloring method when we know exactly what the values of the gradients are.
     * @param colors the colors to use as interpolation points
